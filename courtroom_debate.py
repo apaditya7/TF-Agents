@@ -123,22 +123,46 @@ class CourtRoomDebate(Flow):
             allow_delegation=False,
             llm=self.llm 
         )
-    
+    def generate_self_argument(self, topic, position="supporting"):
+        """Generate a self-generated argument using the LLM."""
+        prompt = f"""
+        You are an expert researcher. Since no external sources were found, generate a logical argument {position} the proposition: "{topic}"
+        
+        Your response should include:
+        1. A clear claim {position} the proposition.
+        2. Logical reasoning or evidence to support the claim.
+        3. A brief conclusion.
+        
+        Format your response as:
+        
+        ## SOURCE
+        Self-generated argument
+        
+        ## KEY POINT
+        [Your logical argument, 2-3 sentences]
+        
+        ## RECOMMENDATION
+        [One sentence on how to use this argument effectively]
+        """
+        
+        # Call the LLM to generate the argument
+        response = self.llm.generate(prompt)
+        return response
     def create_pro_research_task(self, round_num=1, feedback=None, con_argument=None):
         """Create a task for the Pro researcher to find supporting evidence."""
         task_description = f"""
-        Find ONE piece of evidence supporting: "{self.state["topic"]}"
+        Find ONE piece of evidence supporting: "{self.state['topic']}"
         
         Your task:
-        1. Find a single credible source that supports this proposition
-        2. Extract one strong supporting point from this source
-        3. Format your response as shown below
+        1. First, try to find a single credible source using the Web Search tool.
+        2. If the Web Search tool returns no results, generate your own logical argument.
+        3. Format your response as shown below.
         
         ## SOURCE
-        [Website name] - [URL]
+        [Website name] - [URL] (or "Self-generated argument" if no source is found)
         
         ## KEY POINT
-        [Brief summary of the supporting evidence, 2-3 sentences maximum]
+        [Brief summary of the supporting evidence or argument, 2-3 sentences maximum]
         
         ## RECOMMENDATION
         [One sentence on how to use this evidence effectively]
@@ -181,20 +205,20 @@ class CourtRoomDebate(Flow):
     def create_con_research_task(self, pro_argument, round_num=1, feedback=None):
         """Create a task for the Con researcher to find opposing evidence."""
         task_description = f"""
-        Find ONE piece of evidence opposing: "{self.state["topic"]}"
+        Find ONE piece of evidence opposing: "{self.state['topic']}"
         
         PRO ARGUMENT: {pro_argument}
         
         Your task:
-        1. Find a single credible source that counters this proposition
-        2. Extract one strong counter-point from this source
-        3. Format your response as shown below
+        1. First, try to find a single credible source using the Web Search tool.
+        2. If the Web Search tool returns no results, generate your own logical counter-argument.
+        3. Format your response as shown below.
         
         ## SOURCE
-        [Website name] - [URL]
+        [Website name] - [URL] (or "Self-generated argument" if no source is found)
         
         ## KEY COUNTER-POINT
-        [Brief summary of the opposing evidence, 2-3 sentences maximum]
+        [Brief summary of the opposing evidence or argument, 2-3 sentences maximum]
         
         ## RECOMMENDATION
         [One sentence on how to use this evidence effectively]
@@ -274,6 +298,8 @@ class CourtRoomDebate(Flow):
         # Return the topic to begin the flow
         return self.state["topic"]
     
+
+    
     @listen(initialize_debate)
     def run_pro_side_round1(self, topic):
         """Execute the Pro side research and argument for round 1."""
@@ -288,7 +314,13 @@ class CourtRoomDebate(Flow):
             tasks=[research_task],
             verbose=True
         )
-        research_results = pro_research_crew.kickoff()
+        
+        try:
+            research_results = pro_research_crew.kickoff()
+        except Exception as e:
+            # Fallback to self-generated argument if the task fails
+            print(f"⚠️ Web Search failed. Falling back to self-generated argument. Error: {str(e)}")
+            research_results = self.generate_self_argument(topic, position="supporting")
         
         # Store research in state
         self.state["pro_research_r1"] = research_results
@@ -323,7 +355,13 @@ class CourtRoomDebate(Flow):
             tasks=[research_task],
             verbose=True
         )
-        research_results = con_research_crew.kickoff()
+        
+        try:
+            research_results = con_research_crew.kickoff()
+        except Exception as e:
+            # Fallback to self-generated argument if the task fails
+            print(f"⚠️ Web Search failed. Falling back to self-generated argument. Error: {str(e)}")
+            research_results = self.generate_self_argument(self.state["topic"], position="opposing")
         
         # Store research in state
         self.state["con_research_r1"] = research_results
@@ -440,10 +478,104 @@ class CourtRoomDebate(Flow):
     
     def start_next_round(self, processed_feedback):
         """Start the next round of debate with the processed feedback."""
-        return self.conclude_debate({
-            "processed_feedback": processed_feedback,
-            "round": self.state["current_round"] - 1 
-        })
+        current_round = self.state["current_round"]
+        
+        # Create tasks that explicitly reference previous round's arguments and feedback
+        pro_research_task = self.create_pro_research_task(
+            round_num=current_round,
+            feedback=processed_feedback,
+            con_argument=self.state.get(f"con_argument_r{current_round-1}")
+        )
+        
+        # Run Pro Research Crew
+        pro_research_crew = Crew(
+            agents=[self.pro_researcher],
+            tasks=[pro_research_task],
+            verbose=True
+        )
+        
+        try:
+            research_results = pro_research_crew.kickoff()
+        except Exception as e:
+            # Fallback to self-generated argument if the task fails
+            print(f"⚠️ Pro Researcher: Web Search failed. Falling back to self-generated argument. Error: {str(e)}")
+            research_results = self.generate_self_argument(self.state["topic"], position="supporting")
+        
+        # Store research in state
+        self.state[f"pro_research_r{current_round}"] = research_results
+
+        pro_debater_task = self.create_pro_debate_task(
+            research=research_results,
+            round_num=current_round,
+            feedback=processed_feedback,
+            con_argument=self.state.get(f"con_argument_r{current_round-1}")
+        )
+
+        pro_debater_crew = Crew(
+            agents=[self.pro_debater],
+            tasks=[pro_debater_task],
+            verbose=True
+        )
+        debate_results = pro_debater_crew.kickoff()
+        
+        self.state[f"pro_debate_r{current_round}"] = debate_results
+
+        con_research_task = self.create_con_research_task(
+            pro_argument=debate_results,
+            round_num=current_round,
+            feedback=processed_feedback
+        )
+
+        con_research_crew = Crew(
+            agents=[self.con_researcher],
+            tasks=[con_research_task],
+            verbose=True
+        )
+        
+        try:
+            research_results = con_research_crew.kickoff()
+        except Exception as e:
+            print(f"⚠️ Con Researcher: Web Search failed. Falling back to self-generated argument. Error: {str(e)}")
+            research_results = self.generate_self_argument(self.state["topic"], position="opposing")
+        
+        self.state[f"con_research_r{current_round}"] = research_results
+
+        con_debater_task = self.create_con_debate_task(
+            research=research_results,
+            pro_argument=debate_results,
+            round_num=current_round,
+            feedback=processed_feedback
+        )
+
+        con_debater_crew = Crew(
+            agents=[self.con_debater],
+            tasks=[con_debater_task],
+            verbose=True
+        )
+        debate_results = con_debater_crew.kickoff()
+        
+        self.state[f"con_debate_r{current_round}"] = debate_results
+        
+        judge_task = self.create_judge_task(
+            pro_argument=self.state[f"pro_debate_r{current_round}"],
+            con_argument=debate_results,
+            user_feedback=processed_feedback
+        )
+
+        judge_crew = Crew(
+            agents=[self.judge_agent],
+            tasks=[judge_task],
+            verbose=True
+        )
+        processed_feedback = judge_crew.kickoff()
+
+        self.state[f"processed_feedback_r{current_round}"] = processed_feedback
+
+        return {
+            "pro_argument": self.state[f"pro_debate_r{current_round}"],
+            "con_argument": debate_results,
+            "should_continue": True 
+        }
     
     def conclude_debate(self, final_data):
         """Conclude the debate and provide summary."""

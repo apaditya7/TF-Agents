@@ -5,12 +5,11 @@ from langchain_groq import ChatGroq
 load_dotenv() 
 
 llm = ChatGroq(model="groq/llama-3.1-8b-instant")
-# Add this at the very beginning of your script
+
+# SSL and logging configurations remain the same
 import urllib3
 import logging
 import ssl
-
-# Disable all SSL verification
 urllib3.disable_warnings()
 ssl._create_default_https_context = ssl._create_unverified_context
 
@@ -18,11 +17,8 @@ ssl._create_default_https_context = ssl._create_unverified_context
 logging.getLogger("opentelemetry").setLevel(logging.CRITICAL)
 logging.getLogger("urllib3").setLevel(logging.CRITICAL)
 logging.getLogger("requests").setLevel(logging.CRITICAL)
-
-# Disable telemetry completely
-os.environ["CREWAI_TELEMETRY"] = "false"
 def verify_core_flow():
-    """Verify the core debate flow sequence."""
+    """Verify the multi-round debate flow sequence."""
     
     # Set up environment variable to disable telemetry
     os.environ["CREWAI_TELEMETRY"] = "false"
@@ -32,38 +28,58 @@ def verify_core_flow():
     
     # Initialize the flow
     print("Initializing CourtRoomDebate flow...")
-    debate_flow = CourtRoomDebate(debate_topic=test_topic,llm = llm)
+    debate_flow = CourtRoomDebate(debate_topic=test_topic, llm=llm)
     
     # Start a simple interactive test
     print("\n=== INTERACTIVE CORE FLOW TEST ===")
-    print("This will run through one full round of the debate cycle.")
-    print("You'll be prompted to provide feedback at the end of the round.")
-    print("Type 'exit' to end the debate, or provide feedback to continue.\n")
+    print("This will run through multiple rounds of the debate cycle.")
+    print("You'll be prompted to provide feedback after each round.")
+    print("Type 'exit' to end the debate early.\n")
     
-    # Instructions for test mode
-    print("NOTE: Since this is just a verification test, we won't")
-    print("actually continue to a second round even if you provide feedback.\n")
+    # Run multiple rounds
+    rounds_to_run = 3  # You can adjust this number
     
-    proceed = input("Press Enter to begin the test or type 'quit' to exit: ")
-    if proceed.lower().strip() == 'quit':
-        return False
+    for round in range(1, rounds_to_run + 1):
+        print(f"\n===== ROUND {round} =====")
+        
+        # Run the flow
+        print("\nStarting the debate flow...")
+        result = debate_flow.kickoff()
+        
+        # Inspect the result object
+        print(f"Result: {result}")
+        print(f"Result type: {type(result)}")
+        
+        # Check if the result has a 'should_continue' key
+        if isinstance(result, dict) and 'should_continue' in result:
+            if not result['should_continue']:
+                break
+        else:
+            # Fallback: Assume the debate should continue
+            print("Warning: 'should_continue' key not found. Continuing debate.")
+        
+        # Prompt for feedback
+        if round < rounds_to_run:
+            proceed = input("\nPress Enter to continue to next round or type 'exit' to end: ")
+            if proceed.lower().strip() == 'exit':
+                break
     
-    # Run the flow
-    print("\nStarting the debate flow...")
-    result = debate_flow.kickoff()
+    # Final results
+    print("\n=== FINAL TEST RESULTS ===")
     
-    # Check the result
-    print("\n=== TEST RESULTS ===")
-    print(f"Status: {result.get('status', 'unknown')}")
-    print(f"Rounds completed: {result.get('rounds_completed', 0)}")
-    print(f"Topic: {result.get('topic', 'unknown')}")
-    
-    if result.get('status') == "completed" and result.get('rounds_completed') > 0:
-        print("\n✅ Core flow sequence verified successfully!")
-        return True
+    # Check if the result has the required keys
+    if isinstance(result, dict) and 'pro_argument' in result and 'con_argument' in result:
+        print(f"Pro Argument: {result['pro_argument'].raw}")
+        print(f"Con Argument: {result['con_argument'].raw}")
+        
+        if 'should_continue' in result and not result['should_continue']:
+            print("\n✅ Debate concluded successfully!")
+            return True
+        else:
+            print("\n❌ Debate did not conclude as expected. Check the implementation.")
+            return False
     else:
-        print("\n❌ Core flow verification failed. Check the implementation.")
+        print("\n❌ Result object does not have required keys. Check the implementation.")
         return False
-
 if __name__ == "__main__":
     verify_core_flow()
