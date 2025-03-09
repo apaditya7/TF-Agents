@@ -13,7 +13,7 @@ from flask_cors import CORS
 
 # Initialize Flask app
 app = Flask(__name__)
-CORS(app)
+CORS(app, resources={r"/*": {"origins": "*"}})
 debate_sessions = {}
 @app.route('/')
 def index():
