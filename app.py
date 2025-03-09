@@ -9,10 +9,11 @@ from langchain_groq import ChatGroq
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+from flask_cors import CORS
 
 # Initialize Flask app
 app = Flask(__name__)
-
+CORS(app)
 debate_sessions = {}
 @app.route('/')
 def index():
