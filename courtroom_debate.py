@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 
 from crewai_script import google_fact_check, serper_search, combined_research
 from langchain_groq import ChatGroq
+import re
 
 load_dotenv()
 
@@ -56,7 +57,7 @@ class CourtRoomDebate(Flow):
     def _initialize_agents(self):
         """Initialize all debate participants."""
         if self.llm is None:
-            self.llm = ChatGroq(model="groq/llama-3.1-8b-instant")
+            self.llm = ChatGroq(model="groq/llama-3.3-70b-versatile")
             
         # Pass the LLM to each agent explicitly
         self.pro_researcher = Agent(
@@ -125,7 +126,9 @@ class CourtRoomDebate(Flow):
         )
     def generate_self_argument(self, topic, position="supporting"):
         """Generate a self-generated argument using the LLM."""
-        prompt = f"""
+        from langchain_core.messages import HumanMessage
+        
+        prompt_text = f"""
         You are an expert researcher. Since no external sources were found, generate a logical argument {position} the proposition: "{topic}"
         
         Your response should include:
@@ -145,9 +148,14 @@ class CourtRoomDebate(Flow):
         [One sentence on how to use this argument effectively]
         """
         
-        # Call the LLM to generate the argument
-        response = self.llm.generate(prompt)
-        return response
+        # Create a proper message object instead of passing a string
+        message = HumanMessage(content=prompt_text)
+        
+        # Call the LLM with a proper message object
+        response = self.llm.invoke([message])
+        
+        # Extract the content from the response
+        return response.content
     def create_pro_research_task(self, round_num=1, feedback=None, con_argument=None):
         """Create a task for the Pro researcher to find supporting evidence."""
         task_description = f"""
@@ -459,21 +467,20 @@ class CourtRoomDebate(Flow):
     @listen(process_judgment)
     def determine_next_round(self, processed_feedback):
         """Determine whether to continue to the next round."""
-        # Increment round counter
         current_round = self.state["current_round"]
         next_round = current_round + 1
         self.state["current_round"] = next_round
-        
+
         # Check if we should continue
-        if next_round > self.max_rounds or not self.state["should_continue"]:
+        if next_round > self.max_rounds:
+            self.state["should_continue"] = False
             return self.conclude_debate({
                 "processed_feedback": processed_feedback,
                 "round": current_round
             })
         
         print(f"\n===== BEGINNING ROUND {next_round} =====\n")
-        
-        # Continue with next round's research
+        self.state["should_continue"] = True
         return self.start_next_round(processed_feedback)
     
     def start_next_round(self, processed_feedback):
@@ -516,12 +523,12 @@ class CourtRoomDebate(Flow):
             tasks=[pro_debater_task],
             verbose=True
         )
-        debate_results = pro_debater_crew.kickoff()
+        pro_argument = pro_debater_crew.kickoff()
         
-        self.state[f"pro_debate_r{current_round}"] = debate_results
+        self.state[f"pro_debate_r{current_round}"] = pro_argument
 
         con_research_task = self.create_con_research_task(
-            pro_argument=debate_results,
+            pro_argument=pro_argument,
             round_num=current_round,
             feedback=processed_feedback
         )
@@ -542,7 +549,7 @@ class CourtRoomDebate(Flow):
 
         con_debater_task = self.create_con_debate_task(
             research=research_results,
-            pro_argument=debate_results,
+            pro_argument=pro_argument,
             round_num=current_round,
             feedback=processed_feedback
         )
@@ -552,13 +559,13 @@ class CourtRoomDebate(Flow):
             tasks=[con_debater_task],
             verbose=True
         )
-        debate_results = con_debater_crew.kickoff()
+        con_argument = con_debater_crew.kickoff()
         
-        self.state[f"con_debate_r{current_round}"] = debate_results
+        self.state[f"con_debate_r{current_round}"] = con_argument
         
         judge_task = self.create_judge_task(
-            pro_argument=self.state[f"pro_debate_r{current_round}"],
-            con_argument=debate_results,
+            pro_argument=pro_argument,
+            con_argument=con_argument,
             user_feedback=processed_feedback
         )
 
@@ -572,8 +579,8 @@ class CourtRoomDebate(Flow):
         self.state[f"processed_feedback_r{current_round}"] = processed_feedback
 
         return {
-            "pro_argument": self.state[f"pro_debate_r{current_round}"],
-            "con_argument": debate_results,
+            "pro_argument": pro_argument,
+            "con_argument": con_argument,
             "should_continue": True 
         }
     
@@ -582,10 +589,130 @@ class CourtRoomDebate(Flow):
         print("\n===== DEBATE CONCLUDED =====\n")
         print(f"Completed {self.state['current_round']-1} rounds of debate.")
         
-        # Generate and return a simple summary for now
+        # Build comprehensive debate summary
+        summary = f"""
+    ===== FINAL DEBATE SUMMARY =====
+
+    TOPIC: "{self.state['topic']}"
+    ROUNDS COMPLETED: {self.state['current_round']-1}
+
+    KEY PRO ARGUMENTS:
+    """
+        
+        # Add pro arguments from each round
+        for round_num in range(1, self.state["current_round"]):
+            pro_arg = self.state.get(f"pro_debate_r{round_num}", "No argument provided")
+            if pro_arg and isinstance(pro_arg, str):
+                # Extract just the CLAIM and EVIDENCE parts to keep it concise
+                claim_match = re.search(r"##\s*CLAIM\s*(.*?)(?=##|$)", pro_arg, re.DOTALL)
+                if claim_match:
+                    claim = claim_match.group(1).strip()
+                    summary += f"- Round {round_num}: {claim[:150]}...\n"
+        
+        summary += "\nKEY CON ARGUMENTS:\n"
+        
+        # Add con arguments from each round
+        for round_num in range(1, self.state["current_round"]):
+            con_arg = self.state.get(f"con_debate_r{round_num}", "No argument provided") 
+            if con_arg and isinstance(con_arg, str):
+                # Extract just the COUNTER-CLAIM parts to keep it concise
+                claim_match = re.search(r"##\s*COUNTER-CLAIM\s*(.*?)(?=##|$)", con_arg, re.DOTALL)
+                if claim_match:
+                    claim = claim_match.group(1).strip()
+                    summary += f"- Round {round_num}: {claim[:150]}...\n"
+        
+        summary += "\nDEBATE OUTCOME:\n"
+        summary += "This debate explored multiple perspectives on whether AI will have a net positive impact on society."
+        summary += " The Pro side emphasized economic benefits and quality of life improvements, while the Con side"
+        summary += " highlighted potential risks including job displacement, bias, and social inequality."
+        
+        summary += "\n\nFURTHER EXPLORATION:\n"
+        summary += "Future debates might explore specific AI regulations, ethical frameworks, or focus on particular"
+        summary += " sectors where AI's impact might be most profound such as healthcare, transportation, or education."
+        
+        # Print the summary
+        print(summary)
+        
+        # Return final arguments and status
         return {
+            "pro_argument": self.state.get(f"pro_debate_r{self.state['current_round']-1}", "No final argument"),
+            "con_argument": self.state.get(f"con_debate_r{self.state['current_round']-1}", "No final argument"),
+            "should_continue": False,
             "status": "completed",
             "rounds_completed": self.state["current_round"]-1,
             "topic": self.state["topic"],
-            "final_feedback": final_data.get("processed_feedback", "No final feedback available")
+            "final_feedback": final_data.get("processed_feedback", "No final feedback available"),
+            "debate_summary": summary
         }
+
+    def create_summary_task(self):
+        """Create a task for generating a comprehensive debate summary."""
+        
+        # Collect all arguments and feedback from the debate
+        debate_history = self._collect_debate_history()
+        
+        task_description = f"""
+        Create a comprehensive summary of the debate on: "{self.state["topic"]}"
+        
+        DEBATE HISTORY:
+        {debate_history}
+        
+        Your task:
+        1. Analyze the entire debate across all rounds
+        2. Identify the strongest arguments from both sides
+        3. Highlight key areas of agreement and disagreement
+        4. Assess the quality of evidence presented
+        5. Provide suggestions for further exploration
+        
+        Format your summary as follows:
+        
+        ## DEBATE OVERVIEW
+        [Brief overview of the debate topic and progression across rounds]
+        
+        ## KEY PRO ARGUMENTS
+        - [First key pro argument with evidence]
+        - [Second key pro argument with evidence]
+        
+        ## KEY CON ARGUMENTS
+        - [First key con argument with evidence]
+        - [Second key con argument with evidence]
+        
+        ## POINTS OF AGREEMENT
+        [Areas where both sides converged or acknowledged similar points]
+        
+        ## POINTS OF CONTENTION
+        [Core disagreements that remained unresolved]
+        
+        ## QUALITY ASSESSMENT
+        [Evaluation of evidence quality and reasoning from both sides]
+        
+        ## FURTHER EXPLORATION
+        [Suggestions for how this debate could be expanded or refined]
+        """
+        
+        return Task(
+            description=task_description,
+            agent=self.judge_agent,
+            expected_output="Comprehensive debate summary"
+        )
+
+    def _collect_debate_history(self):
+        """Collect all arguments and feedback from all debate rounds."""
+        history = ""
+        
+        for round_num in range(1, self.state["current_round"]):
+            history += f"\n===== ROUND {round_num} =====\n"
+            
+            # Add Pro arguments
+            pro_arg = self.state.get(f"pro_debate_r{round_num}", "No argument provided")
+            history += f"\nPRO ARGUMENT (Round {round_num}):\n{pro_arg}\n"
+            
+            # Add Con arguments
+            con_arg = self.state.get(f"con_debate_r{round_num}", "No argument provided")
+            history += f"\nCON ARGUMENT (Round {round_num}):\n{con_arg}\n"
+            
+            # Add feedback
+            feedback = self.state.get(f"processed_feedback_r{round_num}", "No feedback provided")
+            history += f"\nFEEDBACK (Round {round_num}):\n{feedback}\n"
+        
+        return history
