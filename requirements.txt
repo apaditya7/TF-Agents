@@ -7,3 +7,4 @@ gunicorn
 git+https://github.com/joaomdmoura/crewai-tools.git
 requests
 typing
+Flask
