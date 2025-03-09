@@ -14,6 +14,9 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
 debate_sessions = {}
+@app.route('/')
+def index():
+    return jsonify({"message": "Welcome to the Debate API!"})
 
 def get_llm():
     try:
