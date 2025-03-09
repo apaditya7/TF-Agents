@@ -1,6 +1,5 @@
 from crewai.flow.flow import Flow, listen, start
 from crewai import Agent, Task, Crew
-from langchain_nvidia_ai_endpoints import ChatNVIDIA
 import os
 from typing import Dict, List, Optional
 from dotenv import load_dotenv

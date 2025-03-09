@@ -1,0 +1,10 @@
+git+https://github.com/joaomdmoura/crewai.git
+langchain_groq
+python-dotenv
+pydantic
+urllib3
+gunicorn
+git+https://github.com/joaomdmoura/crewai-tools.git
+requests
+typing
+os
