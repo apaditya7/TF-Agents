@@ -13,7 +13,10 @@ from flask_cors import CORS
 
 # Initialize Flask app
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "https://sentinel-v2-three.vercel.app"}})
+CORS(app, resources={r"/*": {"origins": [
+    "https://sentinel-v2-three.vercel.app",
+    "https://sentinel-v2-7xlj490g4-adityas-projects-000ef4ef.vercel.app"
+]}})
 debate_sessions = {}
 @app.route('/')
 def index():
