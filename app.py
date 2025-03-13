@@ -22,7 +22,7 @@ allowed_origins = [
 ]
 
 # Apply CORS with the allowed origins
-CORS(app, origins=allowed_origins, supports_credentials=True)
+CORS(app, origins="*", supports_credentials=True)
 debate_sessions = {}
 @app.route('/')
 def index():
