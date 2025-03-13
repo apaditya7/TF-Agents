@@ -13,7 +13,16 @@ from flask_cors import CORS
 
 # Initialize Flask app
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "https://sentinel-v2-three.vercel.app"}})
+
+# Apply CORS with the custom checker
+allowed_origins = [
+    "https://sentinel-v2-three.vercel.app",
+    "https://sentinel-v2-7xlj490g4-adityas-projects-000ef4ef.vercel.app",
+    "https://sentinel-v2-7xlj49og4-adityas-projects-000ef4ef.vercel.app/",
+]
+
+# Apply CORS with the allowed origins
+CORS(app, origins="*", supports_credentials=True)
 debate_sessions = {}
 @app.route('/')
 def index():
