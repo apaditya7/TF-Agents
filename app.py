@@ -13,19 +13,9 @@ from flask_cors import CORS
 
 # Initialize Flask app
 app = Flask(__name__)
-allowed_origins = [
-    "https://sentinel-v2-three.vercel.app",
-    "https://sentinel-v2-7xlj490g4-adityas-projects-000ef4ef.vercel.app",
-]
-
-def cors_origin_checker(origin):
-    if origin in allowed_origins:
-        return True
-    if origin.endswith(".vercel.app"):
-        return True
-    return False
-
-CORS(app, origins=cors_origin_checker)
+CORS(app, origins=["https://sentinel-v2-three.vercel.app", 
+                   "https://sentinel-v2-7xlj490g4-adityas-projects-000ef4ef.vercel.app",
+                   "https://*.vercel.app"])
 debate_sessions = {}
 @app.route('/')
 def index():
